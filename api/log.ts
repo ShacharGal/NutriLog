@@ -7,7 +7,7 @@ const supabase = createClient(
 )
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const MODEL = 'google/gemini-2.5-flash-lite'
+const MODEL = 'google/gemini-2.0-flash-001'
 
 const SYSTEM_PROMPT = `You are a nutrition logging assistant for a specific user.
 Your job is to parse meal descriptions into structured nutritional data and help the user track their diet.
@@ -47,9 +47,12 @@ HEALTH GRADING (health_grade field: A/B/C/D/F):
 
 ESTIMATION APPROACH:
 - Be confident, not hedgy. Make a reasonable estimate.
-- For Israeli/Mediterranean dishes use typical local recipes
-- For home cooking, assume moderate oil use unless stated otherwise
-- Protein is the most important macro to get right
+- Use standard serving sizes: 1 slice of cheese = ~28g, 1 egg = ~50g, 1 chicken breast = ~150g, etc.
+- Base estimates on USDA/nutritional database values, not rough guesses.
+- For Israeli/Mediterranean dishes use typical local recipes.
+- For home cooking, assume moderate oil use unless stated otherwise.
+- Protein is the most important macro to get right — round to nearest 0.5g.
+- When the user says "a slice" or "a piece", use the standard weight for that food item.
 
 OUTPUT SCHEMA (always respond with valid JSON, nothing else):
 
