@@ -9,8 +9,6 @@ export interface NutritionLog {
   fiber_g: number | null
   carbs_g: number | null
   fat_g: number | null
-  health_grade: string | null
-  grade_reasoning: string | null
   recurring_meal_ref: string | null
 }
 
@@ -27,7 +25,6 @@ export interface RecurringMeal {
   fiber_g: number | null
   carbs_g: number | null
   fat_g: number | null
-  health_grade: string | null
 }
 
 export interface WeightLog {
@@ -42,8 +39,6 @@ export interface UserSettings {
   daily_calorie_target: number
   updated_at: string
 }
-
-export type HealthGrade = 'A' | 'B' | 'C' | 'D' | 'F'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
