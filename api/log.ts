@@ -7,8 +7,7 @@ const supabase = createClient(
 )
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const LITE = 'google/gemini-2.5-flash-lite'
-const FULL = 'google/gemini-2.5-flash'
+const MODEL = 'google/gemini-2.5-flash-lite'
 
 const SYSTEM_PROMPT = `You are a nutrition logging assistant for a specific user.
 Your job is to parse meal descriptions into structured nutritional data and help the user track their diet.
@@ -138,8 +137,7 @@ CURRENT CONTEXT:
 - Saved recurring meals: ${recurringMeals.length ? recurringMeals.join('; ') : 'none yet'}`
 
     // Model selection: haiku for single-turn, sonnet for multi-turn
-    const isMultiTurn = conversationHistory.length > 0
-    const model = isMultiTurn ? FULL : LITE
+    const model = MODEL
 
     // Build messages (cap at 6)
     const messages = [
