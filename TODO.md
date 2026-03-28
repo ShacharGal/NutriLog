@@ -55,14 +55,14 @@ Mobile-first PWA (Android) for logging meals via natural language chat. AI parse
   - Handles statuses: ready_to_log, needs_clarification, save_recurring, update_recurring
   - Uses haiku for single-turn, sonnet for multi-turn
 
-### Step 7 — LogTab (core chat UI)
-- [ ] src/components/LogTab.tsx
-- [ ] Chat interface, mobile-optimized
-- [ ] Message thread (scrollable) + fixed input at bottom
-- [ ] Loading indicator during API calls
-- [ ] Confirmation cards: calories | protein | fiber | grade (colored badge) + grade_reasoning
-- [ ] Today's summary bar at top: calories/target, protein/target with progress bars
-- [ ] Conversation session rules:
+### Step 7 — LogTab (core chat UI) ✅
+- [x] src/components/LogTab.tsx
+- [x] Chat interface, mobile-optimized
+- [x] Message thread (scrollable) + fixed input at bottom
+- [x] Loading indicator during API calls
+- [x] Confirmation cards: calories | protein | fiber | grade (colored badge) + grade_reasoning
+- [x] Today's summary bar at top: calories/target, protein/target with progress bars
+- [x] Conversation session rules:
   - Each meal = own thread, resets after "ready_to_log"
   - Resets on "done", "next", "new meal"
   - Multi-turn clarification keeps thread alive
