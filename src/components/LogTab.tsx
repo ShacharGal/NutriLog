@@ -107,7 +107,7 @@ export default function LogTab() {
       setHistory(newHistory)
 
       // If meal was logged, track entry ID and update totals
-      if (data.status === 'ready_to_log' || data.status === 'save_recurring') {
+      if (data.status === 'ready_to_log') {
         if (data.logged_entry?.id) setLastEntryId(data.logged_entry.id)
         await loadTodayTotals()
       }

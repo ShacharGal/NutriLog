@@ -228,9 +228,8 @@ CURRENT CONTEXT:
     if (parsed.status === 'save_recurring') {
       const name = parsed.suggested_name ?? parsed.name ?? 'Unnamed meal'
 
-      // Save to recurring_meals
-      await supabase.from('recurring_meals').insert({
-        name,
+      // Use macros from the already-logged entry if available, otherwise fall back to AI response
+      let macros = {
         meal_description: parsed.meal_description,
         ingredients_json: parsed.ingredients,
         calories: parsed.calories,
@@ -238,29 +237,28 @@ CURRENT CONTEXT:
         fiber_g: parsed.fiber_g,
         carbs_g: parsed.carbs_g,
         fat_g: parsed.fat_g,
-      })
+      }
 
-      // Also log to nutrition_log
-      const { data: entry } = await supabase
-        .from('nutrition_log')
-        .insert({
-          raw_input: message,
-          meal_description: parsed.meal_description,
-          ingredients_json: parsed.ingredients,
-          calories: parsed.calories,
-          protein_g: parsed.protein_g,
-          fiber_g: parsed.fiber_g,
-          carbs_g: parsed.carbs_g,
-          fat_g: parsed.fat_g,
-          recurring_meal_ref: name,
-        })
-        .select()
-        .single()
+      if (lastEntryId) {
+        const { data: existing } = await supabase
+          .from('nutrition_log')
+          .select('meal_description, ingredients_json, calories, protein_g, fiber_g, carbs_g, fat_g')
+          .eq('id', lastEntryId)
+          .single()
+        if (existing) {
+          macros = existing
+        }
+      }
+
+      // Save to recurring_meals (don't create a duplicate nutrition_log entry)
+      await supabase.from('recurring_meals').insert({
+        name,
+        ...macros,
+      })
 
       return res.json({
         status: 'save_recurring',
-        message: `Saved "${name}" as a recurring meal and logged it!`,
-        logged_entry: entry,
+        message: `Saved "${name}" as a recurring meal!`,
       })
     }
 
