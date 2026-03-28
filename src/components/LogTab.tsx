@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import type { ChatMessage, LogApiResponse, NutritionLog } from '../lib/types'
+import type { ChatMessage, NutritionLog } from '../lib/types'
 
 const GRADE_COLORS: Record<string, string> = {
   A: 'bg-green-600',
@@ -97,7 +97,13 @@ export default function LogTab() {
         }),
       })
 
-      const data: LogApiResponse = await res.json()
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${data.error || res.statusText}` }])
+        setLoading(false)
+        return
+      }
 
       const assistantMsg: DisplayMessage = {
         role: 'assistant',

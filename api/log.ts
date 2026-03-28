@@ -239,8 +239,9 @@ CURRENT CONTEXT:
 
     // Fallback
     return res.json({ status: parsed.status, message: rawContent })
-  } catch (err) {
-    console.error('Handler error:', err)
-    return res.status(500).json({ error: 'Internal server error' })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('Handler error:', msg)
+    return res.status(500).json({ error: msg })
   }
 }
