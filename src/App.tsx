@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import LogTab from './components/LogTab'
+import MealsTab from './components/MealsTab'
 
 type Tab = 'log' | 'graphs' | 'meals' | 'settings'
 
@@ -11,7 +12,7 @@ function App() {
       <main className="flex-1 flex flex-col">
         {tab === 'log' && <LogTab />}
         {tab === 'graphs' && <Placeholder label="Graphs" />}
-        {tab === 'meals' && <Placeholder label="Meals" />}
+        {tab === 'meals' && <MealsTab />}
         {tab === 'settings' && <Placeholder label="Settings" />}
       </main>
 
