@@ -7,8 +7,8 @@ const supabase = createClient(
 )
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const HAIKU = 'anthropic/claude-haiku-4-5'
-const SONNET = 'anthropic/claude-sonnet-4-6'
+const LITE = 'google/gemini-2.5-flash-lite-preview'
+const FULL = 'google/gemini-2.5-flash'
 
 const SYSTEM_PROMPT = `You are a nutrition logging assistant for a specific user.
 Your job is to parse meal descriptions into structured nutritional data and help the user track their diet.
@@ -139,7 +139,7 @@ CURRENT CONTEXT:
 
     // Model selection: haiku for single-turn, sonnet for multi-turn
     const isMultiTurn = conversationHistory.length > 0
-    const model = isMultiTurn ? SONNET : HAIKU
+    const model = isMultiTurn ? FULL : LITE
 
     // Build messages (cap at 6)
     const messages = [
