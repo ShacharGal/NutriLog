@@ -7,7 +7,7 @@ const supabase = createClient(
 )
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const LITE = 'google/gemini-2.5-flash-lite-preview'
+const LITE = 'google/gemini-2.5-flash-lite'
 const FULL = 'google/gemini-2.5-flash'
 
 const SYSTEM_PROMPT = `You are a nutrition logging assistant for a specific user.
