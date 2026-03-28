@@ -1,3 +1,5 @@
+console.log('[NutriLog] build #1')
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
