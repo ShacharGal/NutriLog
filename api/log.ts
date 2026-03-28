@@ -168,15 +168,18 @@ CURRENT CONTEXT:
     const aiData = await aiRes.json()
     const rawContent = aiData.choices?.[0]?.message?.content ?? ''
 
-    // Parse AI JSON response
+    // Parse AI JSON response — try multiple extraction strategies
     let parsed: AiResponse
     try {
-      // Extract JSON from possible markdown code blocks
-      const jsonMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawContent]
-      parsed = JSON.parse(jsonMatch[1]!.trim())
+      // Strategy 1: code block
+      const codeBlock = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/)
+      // Strategy 2: first { to last }
+      const braceMatch = rawContent.match(/\{[\s\S]*\}/)
+      const jsonStr = codeBlock?.[1]?.trim() ?? braceMatch?.[0] ?? rawContent.trim()
+      parsed = JSON.parse(jsonStr)
     } catch {
       console.error('Failed to parse AI response:', rawContent)
-      return res.status(502).json({ error: 'Failed to parse AI response', raw: rawContent })
+      return res.status(502).json({ error: `Failed to parse AI response: ${rawContent.slice(0, 300)}` })
     }
 
     // Handle DB writes based on status
