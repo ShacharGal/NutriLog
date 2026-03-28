@@ -10,8 +10,6 @@ const GRADE_COLORS: Record<string, string> = {
   F: 'bg-red-500',
 }
 
-const RESET_KEYWORDS = ['done', 'next', 'new meal']
-
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
@@ -74,13 +72,6 @@ export default function LogTab() {
     const text = input.trim()
     if (!text || loading) return
 
-    // Check for reset keywords
-    if (RESET_KEYWORDS.includes(text.toLowerCase())) {
-      resetThread()
-      setInput('')
-      return
-    }
-
     setInput('')
     setLoading(true)
 
@@ -120,10 +111,9 @@ export default function LogTab() {
       ].slice(-6)
       setHistory(newHistory)
 
-      // If meal was logged, update today's totals and reset thread after a pause
+      // If meal was logged, update today's totals
       if (data.status === 'ready_to_log' || data.status === 'save_recurring') {
         await loadTodayTotals()
-        setTimeout(() => resetThread(), 4000)
       }
     } catch {
       setMessages(prev => [
@@ -206,6 +196,14 @@ export default function LogTab() {
 
       {/* Input bar */}
       <div className="border-t border-slate-700 px-4 py-3 pb-[env(safe-area-inset-bottom)]">
+        {messages.length > 0 && (
+          <button
+            onClick={resetThread}
+            className="w-full mb-2 text-xs text-slate-400 border border-slate-600 rounded-full py-1.5 hover:text-green-400 hover:border-green-500"
+          >
+            + New meal
+          </button>
+        )}
         <form
           onSubmit={e => {
             e.preventDefault()
@@ -218,7 +216,7 @@ export default function LogTab() {
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="What did you eat?"
+            placeholder={messages.length > 0 ? "Add a note or follow up..." : "What did you eat?"}
             autoFocus
             className="flex-1 bg-slate-800 border border-slate-600 rounded-full px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-green-500"
           />
