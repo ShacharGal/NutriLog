@@ -162,7 +162,7 @@ CURRENT CONTEXT:
     if (!aiRes.ok) {
       const errText = await aiRes.text()
       console.error('OpenRouter error:', errText)
-      return res.status(502).json({ error: 'AI service error' })
+      return res.status(502).json({ error: `AI service error: ${aiRes.status} ${errText.slice(0, 200)}` })
     }
 
     const aiData = await aiRes.json()
