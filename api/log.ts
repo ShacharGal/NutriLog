@@ -101,9 +101,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { message, conversationHistory = [] } = req.body as {
+    const { message, conversationHistory = [], lastEntryId } = req.body as {
       message: string
       conversationHistory: ChatMessage[]
+      lastEntryId?: string
     }
 
     if (!message) {
@@ -185,31 +186,45 @@ CURRENT CONTEXT:
 
     // Handle DB writes based on status
     if (parsed.status === 'ready_to_log') {
-      const { data: entry, error } = await supabase
-        .from('nutrition_log')
-        .insert({
-          raw_input: message,
-          meal_description: parsed.meal_description,
-          ingredients_json: parsed.ingredients,
-          calories: parsed.calories,
-          protein_g: parsed.protein_g,
-          fiber_g: parsed.fiber_g,
-          carbs_g: parsed.carbs_g,
-          fat_g: parsed.fat_g,
-          health_grade: parsed.health_grade,
-          grade_reasoning: parsed.grade_reasoning,
-        })
-        .select()
-        .single()
+      const entryData = {
+        raw_input: message,
+        meal_description: parsed.meal_description,
+        ingredients_json: parsed.ingredients,
+        calories: parsed.calories,
+        protein_g: parsed.protein_g,
+        fiber_g: parsed.fiber_g,
+        carbs_g: parsed.carbs_g,
+        fat_g: parsed.fat_g,
+        health_grade: parsed.health_grade,
+        grade_reasoning: parsed.grade_reasoning,
+      }
+
+      let entry, error
+      if (lastEntryId) {
+        // Amend existing entry
+        ;({ data: entry, error } = await supabase
+          .from('nutrition_log')
+          .update(entryData)
+          .eq('id', lastEntryId)
+          .select()
+          .single())
+      } else {
+        // New entry
+        ;({ data: entry, error } = await supabase
+          .from('nutrition_log')
+          .insert(entryData)
+          .select()
+          .single())
+      }
 
       if (error) {
-        console.error('DB insert error:', error)
+        console.error('DB error:', error)
         return res.status(500).json({ error: 'Failed to save entry' })
       }
 
       return res.json({
         status: 'ready_to_log',
-        message: parsed.notes || 'Meal logged!',
+        message: lastEntryId ? 'Meal updated!' : (parsed.notes || 'Meal logged!'),
         logged_entry: entry,
       })
     }

@@ -25,6 +25,7 @@ export default function LogTab() {
   const [todayProtein, setTodayProtein] = useState(0)
   const [calTarget, setCalTarget] = useState(2400)
   const [proteinTarget, setProteinTarget] = useState(145)
+  const [lastEntryId, setLastEntryId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -66,6 +67,7 @@ export default function LogTab() {
   function resetThread() {
     setMessages([])
     setHistory([])
+    setLastEntryId(null)
   }
 
   async function send() {
@@ -85,6 +87,7 @@ export default function LogTab() {
         body: JSON.stringify({
           message: text,
           conversationHistory: history.slice(-5),
+          lastEntryId,
         }),
       })
 
@@ -111,8 +114,9 @@ export default function LogTab() {
       ].slice(-6)
       setHistory(newHistory)
 
-      // If meal was logged, update today's totals
+      // If meal was logged, track entry ID and update totals
       if (data.status === 'ready_to_log' || data.status === 'save_recurring') {
+        if (data.logged_entry?.id) setLastEntryId(data.logged_entry.id)
         await loadTodayTotals()
       }
     } catch {
