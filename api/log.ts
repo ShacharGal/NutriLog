@@ -1,8 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -13,18 +12,8 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const HAIKU = 'anthropic/claude-haiku-4-5'
 const SONNET = 'anthropic/claude-sonnet-4-6'
 
-function getSystemPrompt(): string {
-  // Vercel bundles includeFiles relative to project root
-  // Try multiple resolution strategies
-  const paths = [
-    resolve(process.cwd(), 'config', 'system_prompt.txt'),
-    resolve(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'system_prompt.txt'),
-  ]
-  for (const p of paths) {
-    try { return readFileSync(p, 'utf-8') } catch { /* try next */ }
-  }
-  throw new Error('system_prompt.txt not found')
-}
+// Vercel bundles includeFiles relative to the function — __dirname works in their runtime
+const SYSTEM_PROMPT = readFileSync(join(__dirname, '..', 'config', 'system_prompt.txt'), 'utf-8')
 
 interface Ingredient {
   name: string
@@ -89,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       )
 
     // Build system message with runtime context
-    const systemPrompt = getSystemPrompt() + `
+    const systemPrompt = SYSTEM_PROMPT + `
 
 CURRENT CONTEXT:
 - Current weight: ${currentWeight}kg
