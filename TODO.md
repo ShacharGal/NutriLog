@@ -46,9 +46,9 @@ Mobile-first PWA (Android) for logging meals via natural language chat. AI parse
 - [x] src/lib/supabase.ts — Supabase client
 - [x] src/lib/types.ts — shared TypeScript types
 
-### Step 6 — Core serverless function + system prompt
-- [ ] config/system_prompt.txt — AI instructions (see spec below)
-- [ ] api/log.ts — POST: chat turn → AI → maybe write to DB
+### Step 6 — Core serverless function + system prompt ✅
+- [x] config/system_prompt.txt — AI instructions (see spec below)
+- [x] api/log.ts — POST: chat turn → AI → maybe write to DB
   - Reads system_prompt.txt at runtime
   - Appends context: current weight (latest weight_log), today's totals, recurring meal names
   - Calls OpenRouter with conversation history (max 6 messages)
@@ -111,6 +111,11 @@ Mobile-first PWA (Android) for logging meals via natural language chat. AI parse
 - [ ] Deploy to Vercel
 - [ ] Test on Android
 - [ ] Verify PWA install
+
+### Step 15 — Design polish
+- [ ] Review and adjust overall look & feel
+- [ ] Refine colors, spacing, typography
+- [ ] Test mobile UX and make tweaks
 
 ---
 
