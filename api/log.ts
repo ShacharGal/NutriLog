@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'fs'
-import { join } from 'path'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -13,7 +14,16 @@ const HAIKU = 'anthropic/claude-haiku-4-5'
 const SONNET = 'anthropic/claude-sonnet-4-6'
 
 function getSystemPrompt(): string {
-  return readFileSync(join(process.cwd(), 'config', 'system_prompt.txt'), 'utf-8')
+  // Vercel bundles includeFiles relative to project root
+  // Try multiple resolution strategies
+  const paths = [
+    resolve(process.cwd(), 'config', 'system_prompt.txt'),
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'system_prompt.txt'),
+  ]
+  for (const p of paths) {
+    try { return readFileSync(p, 'utf-8') } catch { /* try next */ }
+  }
+  throw new Error('system_prompt.txt not found')
 }
 
 interface Ingredient {
