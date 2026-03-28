@@ -2,14 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import type { ChatMessage, NutritionLog } from '../lib/types'
 
-const GRADE_COLORS: Record<string, string> = {
-  A: 'bg-green-600',
-  B: 'bg-blue-500',
-  C: 'bg-yellow-500',
-  D: 'bg-orange-500',
-  F: 'bg-red-500',
-}
-
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
@@ -238,12 +230,9 @@ export default function LogTab() {
 }
 
 function ConfirmationCard({ entry }: { entry: NutritionLog }) {
-  const grade = entry.health_grade ?? 'C'
-  const color = GRADE_COLORS[grade] ?? 'bg-slate-500'
-
   return (
     <div className="mt-2 mr-auto bg-slate-800 border border-slate-600 rounded-xl p-3 max-w-[85%]">
-      <div className="flex items-center gap-3 text-sm">
+      <div className="flex items-center gap-4 text-sm">
         <div className="text-center">
           <div className="text-lg font-bold text-slate-100">{entry.calories ?? '—'}</div>
           <div className="text-[10px] text-slate-400">cal</div>
@@ -253,18 +242,14 @@ function ConfirmationCard({ entry }: { entry: NutritionLog }) {
           <div className="text-[10px] text-slate-400">protein</div>
         </div>
         <div className="text-center">
-          <div className="text-lg font-bold text-slate-100">{entry.fiber_g ?? '—'}g</div>
-          <div className="text-[10px] text-slate-400">fiber</div>
+          <div className="text-lg font-bold text-slate-100">{entry.carbs_g ?? '—'}g</div>
+          <div className="text-[10px] text-slate-400">carbs</div>
         </div>
         <div className="text-center">
-          <span className={`${color} text-white text-lg font-bold px-2.5 py-0.5 rounded`}>
-            {grade}
-          </span>
+          <div className="text-lg font-bold text-slate-100">{entry.fat_g ?? '—'}g</div>
+          <div className="text-[10px] text-slate-400">fat</div>
         </div>
       </div>
-      {entry.grade_reasoning && (
-        <p className="text-xs text-slate-400 mt-2">{entry.grade_reasoning}</p>
-      )}
     </div>
   )
 }

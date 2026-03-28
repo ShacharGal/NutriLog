@@ -18,7 +18,7 @@ USER PROFILE:
 - Training: lifting weights 2-3x per week, beginner, health-focused
 - Daily targets: ~145g protein, ~2400 calories (adjust if user updates)
 
-DIETARY RULES (important for grading):
+DIETARY RULES:
 - Does NOT eat cow dairy. Sheep and goat dairy are fine.
 - Avoids gluten and processed foods (not strict, but preferred)
 - Cuisine context: Israeli/Mediterranean home cooking is typical
@@ -38,13 +38,6 @@ BEHAVIOR:
 
 5. If the user says "update my X" or "change X to include Y": respond with status "update_recurring".
 
-HEALTH GRADING (health_grade field: A/B/C/D/F):
-- A: protein-dense, whole foods, fits dietary rules
-- B: good meal, minor concerns (some processing, low protein)
-- C: acceptable nutrition, notable concerns
-- D: poor nutritional profile or significant rule violations
-- F: mostly junk, heavy processing, multiple violations
-
 ESTIMATION APPROACH:
 - Be confident, not hedgy. Make a reasonable estimate.
 - Use standard serving sizes: 1 slice of cheese = ~28g, 1 egg = ~50g, 1 chicken breast = ~150g, etc.
@@ -57,16 +50,16 @@ ESTIMATION APPROACH:
 OUTPUT SCHEMA (always respond with valid JSON, nothing else):
 
 For a loggable entry:
-{"status":"ready_to_log","meal_description":"string","ingredients":[{"name":"string","amount":"string"}],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number,"health_grade":"A|B|C|D|F","grade_reasoning":"string (1-2 sentences)","notes":"string|null"}
+{"status":"ready_to_log","meal_description":"string","ingredients":[{"name":"string","amount":"string"}],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number,"notes":"string|null"}
 
 For clarification needed:
 {"status":"needs_clarification","question":"string"}
 
 For saving a recurring meal:
-{"status":"save_recurring","suggested_name":"string","meal_description":"string","ingredients":[...],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number,"health_grade":"A|B|C|D|F"}
+{"status":"save_recurring","suggested_name":"string","meal_description":"string","ingredients":[...],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number}
 
 For updating a recurring meal:
-{"status":"update_recurring","name":"string","meal_description":"string","ingredients":[...],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number,"health_grade":"A|B|C|D|F"}`
+{"status":"update_recurring","name":"string","meal_description":"string","ingredients":[...],"calories":number,"protein_g":number,"fiber_g":number,"carbs_g":number,"fat_g":number}`
 
 interface Ingredient {
   name: string
@@ -82,8 +75,6 @@ interface AiResponse {
   fiber_g?: number
   carbs_g?: number
   fat_g?: number
-  health_grade?: string
-  grade_reasoning?: string
   notes?: string | null
   question?: string
   suggested_name?: string
@@ -195,8 +186,6 @@ CURRENT CONTEXT:
         fiber_g: parsed.fiber_g,
         carbs_g: parsed.carbs_g,
         fat_g: parsed.fat_g,
-        health_grade: parsed.health_grade,
-        grade_reasoning: parsed.grade_reasoning,
       }
 
       let entry, error
@@ -249,7 +238,6 @@ CURRENT CONTEXT:
         fiber_g: parsed.fiber_g,
         carbs_g: parsed.carbs_g,
         fat_g: parsed.fat_g,
-        health_grade: parsed.health_grade,
       })
 
       // Also log to nutrition_log
@@ -264,8 +252,6 @@ CURRENT CONTEXT:
           fiber_g: parsed.fiber_g,
           carbs_g: parsed.carbs_g,
           fat_g: parsed.fat_g,
-          health_grade: parsed.health_grade,
-          grade_reasoning: parsed.grade_reasoning,
           recurring_meal_ref: name,
         })
         .select()
@@ -291,7 +277,6 @@ CURRENT CONTEXT:
           fiber_g: parsed.fiber_g,
           carbs_g: parsed.carbs_g,
           fat_g: parsed.fat_g,
-          health_grade: parsed.health_grade,
           updated_at: new Date().toISOString(),
         })
         .eq('name', name)
