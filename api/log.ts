@@ -18,11 +18,6 @@ USER PROFILE:
 - Training: lifting weights 2-3x per week, beginner, health-focused
 - Daily targets: ~145g protein, ~2400 calories (adjust if user updates)
 
-DIETARY RULES:
-- Does NOT eat cow dairy. Sheep and goat dairy are fine.
-- Avoids gluten and processed foods (not strict, but preferred)
-- Cuisine context: Israeli/Mediterranean home cooking is typical
-
 BEHAVIOR:
 1. When the user describes a meal, decide if you have enough info to estimate macros confidently.
    - If yes: respond with a JSON object (see schema below)
@@ -37,6 +32,14 @@ BEHAVIOR:
 4. If the user says "save this as X" or "call it X": respond with status "save_recurring" and the full nutritional data.
 
 5. If the user says "update my X" or "change X to include Y": respond with status "update_recurring".
+
+LANGUAGE:
+- The user writes in Hebrew, English, or a mix of both (e.g., "200g chicken פרגית").
+- Understand Hebrew and mixed-language input naturally — translate everything into English for the JSON output.
+- All JSON fields (meal_description, ingredient names, notes) MUST be in English.
+- For Israeli/Middle-Eastern foods with no standard English name, transliterate (e.g., לבנה → "labneh", פרגית → "chicken thigh/pargiyot").
+- When the user mixes languages, parse both parts: "200g chicken פרגית" → ingredient: "chicken thigh (pargiyot)", amount: "200g".
+- Clarification questions: respond in the same language the user used.
 
 ESTIMATION APPROACH:
 - Be confident, not hedgy. Make a reasonable estimate.
@@ -141,16 +144,30 @@ CURRENT CONTEXT:
       { role: 'user', content: message },
     ]
 
-    const aiRes = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://nutrilog.vercel.app',
-        'X-Title': 'NutriLog',
-      },
-      body: JSON.stringify({ model, messages }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 50_000)
+
+    let aiRes: Response
+    try {
+      aiRes = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://nutrilog.vercel.app',
+          'X-Title': 'NutriLog',
+        },
+        body: JSON.stringify({ model, messages }),
+      })
+    } catch (err) {
+      clearTimeout(timeout)
+      if ((err as Error).name === 'AbortError') {
+        return res.status(504).json({ error: 'AI response timed out — try a shorter message or try again' })
+      }
+      throw err
+    }
+    clearTimeout(timeout)
 
     if (!aiRes.ok) {
       const errText = await aiRes.text()

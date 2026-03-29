@@ -232,6 +232,9 @@ export default function LogTab() {
 function ConfirmationCard({ entry }: { entry: NutritionLog }) {
   return (
     <div className="mt-2 mr-auto bg-slate-800 border border-slate-600 rounded-xl p-3 max-w-[85%]">
+      {entry.meal_description && (
+        <div className="text-xs text-slate-300 mb-2">{entry.meal_description}</div>
+      )}
       <div className="flex items-center gap-4 text-sm">
         <div className="text-center">
           <div className="text-lg font-bold text-slate-100">{entry.calories ?? '—'}</div>
