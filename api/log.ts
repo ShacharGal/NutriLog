@@ -28,7 +28,7 @@ interface ChatMessage {
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!)
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const STAGE1_MODEL = 'google/gemini-2.5-flash-lite-preview'
+const STAGE1_MODEL = 'google/gemini-2.5-flash-lite'
 const FALLBACK_MODEL = 'openai/gpt-4o-mini'
 
 const USDA_API_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search'
