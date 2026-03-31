@@ -21,11 +21,11 @@ function App() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`text-xs capitalize ${
+            className={`text-xs ${
               tab === t ? 'text-green-400' : 'text-slate-400'
             }`}
           >
-            {t}
+            {t === 'meals' ? 'My Foods' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </nav>
