@@ -27,6 +27,15 @@ export interface RecurringMeal {
   fat_g: number | null
 }
 
+export interface PersonalIngredient {
+  id: string
+  name: string
+  aliases: string[] | null
+  nutrients_per_100g: { calories: number; protein: number; carbs: number; fat: number; fiber: number }
+  source: string
+  created_at: string
+}
+
 export interface WeightLog {
   id: string
   logged_at: string

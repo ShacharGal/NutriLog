@@ -1,4 +1,4 @@
-console.log('[NutriLog] build #20')
+console.log('[NutriLog] build #21')
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
