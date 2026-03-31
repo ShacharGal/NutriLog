@@ -136,12 +136,37 @@ function classifyInput(input: string, savedMealNames: string[]): { classificatio
 
 // ─── USDA Client ─────────────────────────────────────────────────────────────
 
+const USDA_SEARCH_OVERRIDES: Record<string, string> = {
+  'egg': 'egg whole raw',
+  'eggs': 'egg whole raw',
+  'white bread': 'bread white commercially prepared',
+  'butter': 'butter salted',
+  'olive oil': 'oil olive',
+  'rice': 'rice white cooked',
+  'chicken breast': 'chicken breast meat cooked roasted',
+  'chicken thigh': 'chicken thigh meat cooked',
+  'pasta': 'pasta cooked',
+  'spaghetti': 'spaghetti cooked',
+  'avocado': 'avocado raw',
+  'banana': 'banana raw',
+  'apple': 'apple raw',
+  'tomato': 'tomato red ripe raw',
+  'onion': 'onion raw',
+  'garlic': 'garlic raw',
+  'pita bread': 'pita bread white',
+  'hummus': 'hummus commercial',
+  'ground beef': 'beef ground 85 lean cooked',
+  'salmon': 'salmon atlantic cooked',
+  'cheese': 'cheese cheddar',
+}
+
 function extractNutrient(nutrients: Array<{ nutrientId: number; value: number }>, id: number): number {
   return nutrients.find(n => n.nutrientId === id)?.value ?? 0
 }
 
 async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
   const searchTerm = foodName.toLowerCase().trim()
+  const queryTerm = USDA_SEARCH_OVERRIDES[searchTerm] ?? foodName
 
   const { data: cached } = await supabase
     .from('usda_cache')
@@ -156,9 +181,9 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
   }
 
   const apiKey = process.env.USDA_API_KEY || 'DEMO_KEY'
-  const url = `${USDA_API_URL}?query=${encodeURIComponent(foodName)}&pageSize=5&dataType=SR%20Legacy&api_key=${apiKey}`
+  const url = `${USDA_API_URL}?query=${encodeURIComponent(queryTerm)}&pageSize=5&dataType=SR%20Legacy&api_key=${apiKey}`
 
-  console.log(`[USDA] API call: "${foodName}"`)
+  console.log(`[USDA] API call: "${queryTerm}" (input: "${foodName}")`)
 
   try {
     const response = await fetch(url)
