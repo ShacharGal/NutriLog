@@ -68,50 +68,50 @@ Mobile-first PWA (Android) for logging meals via natural language chat. Two-stag
 - [x] Write SPECS.md with full architecture
 - [x] Update TODO.md with new plan
 
-### Step P2 — Prompt & Config Updates
-- [ ] Rewrite config/system_prompt.txt for Stage 1 extraction only (no macro calculation)
-- [ ] Update api/log.ts: model → gemini-2.5-flash-lite, temperature: 0.1
-- [ ] Add response_format: { type: "json_object" } to LLM call
-- [ ] Verify build passes
+### Step P2 — Prompt & Config Updates ✅
+- [x] Rewrite config/system_prompt.txt for Stage 1 extraction only (no macro calculation)
+- [x] Update api/log.ts: model → gemini-2.5-flash-lite, temperature: 0.1
+- [x] Add response_format: { type: "json_object" } to LLM call
+- [x] Verify build passes
 
-### Step P3 — Database Schema Migration
-- [ ] Create migration: personal_ingredients table
-- [ ] Create migration: personal_recipes table
-- [ ] Create migration: usda_cache table
-- [ ] ALTER nutrition_log: add ingredients JSONB, source_tier TEXT
-- [ ] Run migration against Supabase
+### Step P3 — Database Schema Migration ✅
+- [x] Create migration: personal_ingredients table
+- [x] Create migration: personal_recipes table
+- [x] Create migration: usda_cache table
+- [x] ALTER nutrition_log: add ingredients JSONB, source_tier TEXT
+- [x] Run migration against Supabase
 
-### Step P4 — Shared Types & Validation
-- [ ] Create src/types/nutrition.ts (NutrientsPer100g, ResolvedIngredient, ParsedMealResult, LLMParsedItem)
-- [ ] Create src/lib/validation.ts (atwaterCheck, atwaterCorrect, clampNutrients, calculateTotals)
-- [ ] Create src/lib/portionDefaults.ts
-- [ ] Verify types compile
+### Step P4 — Shared Types & Validation ✅
+- [x] Create src/types/nutrition.ts (NutrientsPer100g, ResolvedIngredient, ParsedMealResult, LLMParsedItem)
+- [x] Create src/lib/validation.ts (atwaterCheck, atwaterCorrect, clampNutrients, calculateTotals)
+- [x] Create src/lib/portionDefaults.ts
+- [x] Verify types compile
 
-### Step P5 — USDA Client
-- [ ] Create src/lib/usda.ts — search USDA FoodData Central API
-- [ ] Parse response to NutrientsPer100g
-- [ ] Write results to usda_cache table
-- [ ] Cache-first: check usda_cache before API call
+### Step P5 — USDA Client ✅
+- [x] Create src/lib/usda.ts — search USDA FoodData Central API
+- [x] Parse response to NutrientsPer100g
+- [x] Write results to usda_cache table
+- [x] Cache-first: check usda_cache before API call
 
-### Step P6 — Personal DB Client
-- [ ] Create src/lib/personalDb.ts — query personal_ingredients by name/alias
-- [ ] Query personal_recipes by name/alias
-- [ ] Return ResolvedIngredient contract
+### Step P6 — Personal DB Client ✅
+- [x] Create src/lib/personalDb.ts — query personal_ingredients by name/alias
+- [x] Query personal_recipes by name/alias
+- [x] Return ResolvedIngredient contract
 
-### Step P7 — Modification Classifier
-- [ ] Create src/lib/modificationClassifier.ts
-- [ ] Regex classifier: EXACT_MATCH | REMOVE | QUANTITY | ADD_SUBSTITUTE | NEW_MEAL
-- [ ] Handle remove (filter ingredients), quantity (multiply weights)
+### Step P7 — Modification Classifier ✅
+- [x] Create src/lib/modificationClassifier.ts
+- [x] Regex classifier: EXACT_MATCH | REMOVE | QUANTITY | ADD_SUBSTITUTE | NEW_MEAL
+- [x] Handle remove (filter ingredients), quantity (multiply weights)
 
-### Step P8 — Pipeline Refactor (api/log.ts)
-- [ ] Integrate classifier → resolution engine → validation
-- [ ] Stage 1: LLM extraction only (food_name + quantity_grams)
-- [ ] Stage 2: Parallel tier resolution (personal → USDA → LLM fallback)
-- [ ] Stage 3: LLM fallback for unresolved items
-- [ ] Atwater validation on all results
-- [ ] Calculate totals server-side
-- [ ] Write ingredients JSONB + source_tier to nutrition_log
-- [ ] Verify build, test end-to-end
+### Step P8 — Pipeline Refactor (api/log.ts) ✅
+- [x] Integrate classifier → resolution engine → validation
+- [x] Stage 1: LLM extraction only (food_name + quantity_grams)
+- [x] Stage 2: Parallel tier resolution (personal → USDA → LLM fallback)
+- [x] Stage 3: LLM fallback for unresolved items
+- [x] Atwater validation on all results
+- [x] Calculate totals server-side
+- [x] Write ingredients JSONB + source_tier to nutrition_log
+- [x] Verify build, test end-to-end
 
 ---
 

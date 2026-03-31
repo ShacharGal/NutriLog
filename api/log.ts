@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
+import { classifyInput } from '../src/lib/modificationClassifier'
+import { resolveIngredients } from '../src/lib/resolver'
+import { calculateTotals, atwaterCheck, atwaterCorrect } from '../src/lib/validation'
+import { findRecurringMeal } from '../src/lib/personalDb'
+import type { LLMParsedItem, ResolvedIngredient, NutrientsPer100g, SourceTier } from '../src/types/nutrition'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -7,28 +12,24 @@ const supabase = createClient(
 )
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const MODEL = 'google/gemini-2.5-flash-lite-preview'
+const STAGE1_MODEL = 'google/gemini-2.5-flash-lite-preview'
 
-const SYSTEM_PROMPT = `You are a meal-ingredient extraction assistant for a nutrition tracker.
+const STAGE1_SYSTEM_PROMPT = `You are a meal-ingredient extraction assistant for a nutrition tracker.
 Your ONLY job is to parse a meal description into a list of individual ingredients with estimated gram weights.
 You do NOT calculate calories, protein, or any macros — that is handled by a separate lookup step.
 
 USER PROFILE:
 - Male, 185cm, weight is dynamic (provided at runtime)
-- Goal: adequate protein intake and clean, healthy eating
-- Training: lifting weights 2-3x per week, beginner, health-focused
 - Cuisine context: Israeli/Mediterranean home cooking is typical
 
-DIETARY CONTEXT (for accurate ingredient guessing):
+DIETARY CONTEXT:
 - Does NOT eat cow dairy. Sheep and goat dairy are fine.
 - Avoids gluten and processed foods (not strict, but preferred)
 
 LANGUAGE:
-- The user writes in Hebrew, English, or a mix of both (e.g., "200g chicken פרגית").
-- Understand Hebrew and mixed-language input naturally.
+- The user writes in Hebrew, English, or a mix of both.
 - All JSON output fields MUST be in English.
-- For Israeli/Middle-Eastern foods with no standard English name, transliterate (e.g., לבנה → "labneh", פרגית → "chicken thigh/pargiyot", חומוס → "hummus", טחינה → "tahini").
-- When the user mixes languages, parse both parts: "200g chicken פרגית" → food_name: "chicken thigh (pargiyot)", quantity_grams: 200.
+- For Israeli/Middle-Eastern foods, transliterate (e.g., לבנה → "labneh", פרגית → "chicken thigh/pargiyot").
 - Clarification questions: respond in the same language the user used.
 
 PORTION DEFAULTS:
@@ -36,64 +37,24 @@ PORTION DEFAULTS:
 - A bowl = 300ml, a plate = moderate adult serving
 - A handful of nuts = 30g, olive oil for cooking = 15g
 - 1 pita = 60g, 1 cup rice (cooked) = 200g
-- 1 slice cheese = 28g, 1 tablespoon oil/butter = 14g
-- When the user says "a slice" or "a piece", use the standard weight for that food item.
 
 BEHAVIOR:
-1. When the user describes a meal, break it down into ALL individual ingredients with gram weights.
-   - Include cooking fats (oil, butter) even if not explicitly mentioned for cooked dishes.
-   - Decompose composite dishes into their components (e.g., shakshuka → tomatoes, eggs, onion, oil, spices).
-   - If an ingredient is clearly stated with a weight, use that weight exactly.
-   - If no weight is given, use reasonable defaults from PORTION DEFAULTS or common sense.
+1. Break down the meal into ALL individual ingredients with gram weights.
+   - Include cooking fats even if not explicitly mentioned.
+   - Decompose composite dishes into components.
+2. If too vague, respond with needs_clarification. Max 1 question.
+   - Simple meals (2 eggs, a banana): always parse immediately.
 
-2. If the input is too vague to determine the ingredients (e.g., "food", "something I ate"):
-   - Respond with needs_clarification and ask ONE concise question.
-   - Never ask more than 1 clarifying question — if still unclear, make your best guess.
-   - Simple meals (2 eggs, a banana, coffee): always parse immediately, never ask for clarification.
-
-FEW-SHOT EXAMPLES:
-
+EXAMPLES:
 User: "2 scrambled eggs with toast"
-Response:
 {"status":"parsed","items":[{"food_name":"egg","quantity_grams":100},{"food_name":"white bread","quantity_grams":35},{"food_name":"butter","quantity_grams":5}]}
 
 User: "shakshuka with 2 pitas and hummus"
-Response:
 {"status":"parsed","items":[{"food_name":"canned crushed tomatoes","quantity_grams":200},{"food_name":"egg","quantity_grams":100},{"food_name":"onion","quantity_grams":50},{"food_name":"bell pepper","quantity_grams":40},{"food_name":"olive oil","quantity_grams":15},{"food_name":"pita bread","quantity_grams":120},{"food_name":"hummus","quantity_grams":80}]}
 
-User: "a big bowl of pasta with meat sauce"
-Response:
-{"status":"parsed","items":[{"food_name":"spaghetti (cooked)","quantity_grams":300},{"food_name":"ground beef","quantity_grams":150},{"food_name":"canned crushed tomatoes","quantity_grams":150},{"food_name":"onion","quantity_grams":40},{"food_name":"olive oil","quantity_grams":15},{"food_name":"parmesan cheese","quantity_grams":15}]}
-
-OUTPUT CONTRACT (always respond with valid JSON, nothing else):
-
-For parseable input:
+OUTPUT (valid JSON only):
 {"status":"parsed","items":[{"food_name":"string","quantity_grams":number}]}
-
-For clarification needed:
 {"status":"needs_clarification","question":"string"}`
-
-interface ParsedItem {
-  food_name: string
-  quantity_grams: number
-}
-
-interface AiResponse {
-  status: 'parsed' | 'needs_clarification' | 'ready_to_log' | 'save_recurring' | 'update_recurring'
-  items?: ParsedItem[]
-  question?: string
-  // Legacy fields still used by DB write logic (Phase 3 will refactor these)
-  meal_description?: string
-  ingredients?: { name: string; amount: string }[]
-  calories?: number
-  protein_g?: number
-  fiber_g?: number
-  carbs_g?: number
-  fat_g?: number
-  notes?: string | null
-  suggested_name?: string
-  name?: string
-}
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -116,6 +77,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'message is required' })
     }
 
+    console.log(`[LogAPI] Input: "${message}"`)
+
     // Fetch context in parallel
     const [weightRes, todayRes, recurringRes, settingsRes] = await Promise.all([
       supabase.from('weight_log').select('weight_kg').order('logged_at', { ascending: false }).limit(1),
@@ -126,203 +89,265 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const currentWeight = weightRes.data?.[0]?.weight_kg ?? 80
     const settings = settingsRes.data ?? { daily_protein_target: 145, daily_calorie_target: 2400 }
-
     const todayEntries = todayRes.data ?? []
     const todayCalories = todayEntries.reduce((sum: number, e: { calories: number | null }) => sum + (e.calories ?? 0), 0)
     const todayProtein = todayEntries.reduce((sum: number, e: { protein_g: number | null }) => sum + (e.protein_g ?? 0), 0)
 
-    const recurringMeals = (recurringRes.data ?? [])
-      .map((m: { name: string; aliases: string[] | null }) =>
-        m.aliases?.length ? `${m.name} (aliases: ${m.aliases.join(', ')})` : m.name
-      )
+    // Build list of saved meal names for classifier
+    const savedMeals = (recurringRes.data ?? []) as { name: string; aliases: string[] | null }[]
+    const savedMealNames = savedMeals.flatMap(m => [m.name, ...(m.aliases ?? [])])
 
-    // Build system message with runtime context
-    const systemPrompt = SYSTEM_PROMPT + `
+    // --- STEP 1: Classify input ---
+    const classification = classifyInput(message, savedMealNames)
+
+    // --- STEP 2: Handle based on classification ---
+
+    // EXACT_MATCH: log from recurring meal, zero tokens
+    if (classification.classification === 'EXACT_MATCH' && classification.matchedMeal) {
+      const meal = await findRecurringMeal(classification.matchedMeal)
+      if (meal) {
+        console.log(`[LogAPI] Exact match: "${classification.matchedMeal}"`)
+        return await logFromRecurringMeal(res, message, meal, lastEntryId)
+      }
+      // If not found in DB (shouldn't happen), fall through to NEW_MEAL
+    }
+
+    // REMOVE: filter ingredients from recurring meal
+    if (classification.classification === 'REMOVE' && classification.matchedMeal) {
+      const meal = await findRecurringMeal(classification.matchedMeal)
+      if (meal && meal.ingredients_json) {
+        console.log(`[LogAPI] Remove modifier on: "${classification.matchedMeal}"`)
+        const ingredients = meal.ingredients_json as Array<{ name: string; amount: string }>
+        const modifier = (classification.modifier ?? '').toLowerCase()
+        // Filter out ingredients that match the remove keyword
+        const filtered = ingredients.filter(ing => !modifier.includes(ing.name.toLowerCase()))
+        // For now, log the recurring meal as-is but note the modification
+        // Full ingredient-level recalculation requires the ingredients to have per_100g data
+        // which legacy recurring_meals don't have. Fall through to NEW_MEAL for re-parsing.
+      }
+      // Fall through — legacy recurring_meals don't have per_100g data for recalculation
+    }
+
+    // QUANTITY: handled similarly — fall through for now
+    // ADD_SUBSTITUTE: needs LLM for new ingredient — fall through to parse
+
+    // --- STEP 3: NEW_MEAL (or fallthrough) — Stage 1 LLM Parse ---
+    const stage1Result = await callStage1LLM(message, conversationHistory, currentWeight, settings, savedMeals)
+
+    if (!stage1Result) {
+      return res.status(502).json({ error: 'Failed to get AI response' })
+    }
+
+    // Handle clarification
+    if (stage1Result.status === 'needs_clarification') {
+      return res.json({
+        status: 'needs_clarification',
+        message: stage1Result.question,
+      })
+    }
+
+    if (stage1Result.status !== 'parsed' || !stage1Result.items?.length) {
+      console.log('[LogAPI] Unexpected Stage 1 result:', JSON.stringify(stage1Result))
+      return res.status(502).json({ error: 'AI returned unexpected format' })
+    }
+
+    console.log(`[LogAPI] Stage 1 parsed ${stage1Result.items.length} items`)
+
+    // --- STEP 4: Resolve ingredients (Tier 1 → 2 → 3) ---
+    const resolvedItems = await resolveIngredients(stage1Result.items)
+
+    // --- STEP 5: Calculate totals & validate ---
+    let totals = calculateTotals(resolvedItems)
+    if (!atwaterCheck(totals)) {
+      console.log('[LogAPI] Atwater check failed, correcting calories')
+      totals = atwaterCorrect(totals)
+    }
+
+    // Determine source tier
+    const sources = new Set(resolvedItems.map(i => i.source))
+    const sourceTier: SourceTier = sources.size === 1 ? resolvedItems[0].source : 'mixed'
+
+    // Build meal description from ingredients
+    const mealDescription = resolvedItems.map(i => `${i.food_name} (${i.weight_g}g)`).join(', ')
+
+    // --- STEP 6: Write to DB ---
+    const entryData = {
+      raw_input: message,
+      meal_description: mealDescription,
+      ingredients_json: resolvedItems.map(i => ({ name: i.food_name, amount: `${i.weight_g}g` })),
+      calories: totals.calories,
+      protein_g: totals.protein,
+      fiber_g: totals.fiber,
+      carbs_g: totals.carbs,
+      fat_g: totals.fat,
+      ingredients: resolvedItems,
+      source_tier: sourceTier,
+    }
+
+    let entry, error
+    if (lastEntryId) {
+      ;({ data: entry, error } = await supabase
+        .from('nutrition_log')
+        .update(entryData)
+        .eq('id', lastEntryId)
+        .select()
+        .single())
+    } else {
+      ;({ data: entry, error } = await supabase
+        .from('nutrition_log')
+        .insert(entryData)
+        .select()
+        .single())
+    }
+
+    if (error) {
+      console.error('[LogAPI] DB error:', error)
+      return res.status(500).json({ error: 'Failed to save entry' })
+    }
+
+    console.log(`[LogAPI] Logged: ${totals.calories} cal, ${totals.protein}g protein [${sourceTier}]`)
+
+    return res.json({
+      status: 'ready_to_log',
+      message: lastEntryId ? 'Meal updated!' : 'Meal logged!',
+      logged_entry: entry,
+    })
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[LogAPI] Handler error:', msg)
+    return res.status(500).json({ error: msg })
+  }
+}
+
+// --- Helper: Log from a recurring meal (zero LLM tokens) ---
+
+async function logFromRecurringMeal(
+  res: VercelResponse,
+  rawInput: string,
+  meal: Record<string, unknown>,
+  lastEntryId?: string,
+) {
+  const entryData = {
+    raw_input: rawInput,
+    meal_description: meal.meal_description as string,
+    ingredients_json: meal.ingredients_json,
+    calories: meal.calories as number,
+    protein_g: meal.protein_g as number,
+    fiber_g: meal.fiber_g as number,
+    carbs_g: meal.carbs_g as number,
+    fat_g: meal.fat_g as number,
+    recurring_meal_ref: meal.name as string,
+    source_tier: 'personal' as SourceTier,
+  }
+
+  let entry, error
+  if (lastEntryId) {
+    ;({ data: entry, error } = await supabase
+      .from('nutrition_log')
+      .update(entryData)
+      .eq('id', lastEntryId)
+      .select()
+      .single())
+  } else {
+    ;({ data: entry, error } = await supabase
+      .from('nutrition_log')
+      .insert(entryData)
+      .select()
+      .single())
+  }
+
+  if (error) {
+    console.error('[LogAPI] DB error (recurring):', error)
+    return res.status(500).json({ error: 'Failed to save entry' })
+  }
+
+  console.log(`[LogAPI] Logged recurring "${meal.name}" — zero tokens`)
+
+  return res.json({
+    status: 'ready_to_log',
+    message: `Logged "${meal.name}"!`,
+    logged_entry: entry,
+  })
+}
+
+// --- Helper: Stage 1 LLM call ---
+
+interface Stage1Result {
+  status: 'parsed' | 'needs_clarification'
+  items?: LLMParsedItem[]
+  question?: string
+}
+
+async function callStage1LLM(
+  message: string,
+  conversationHistory: ChatMessage[],
+  currentWeight: number,
+  settings: { daily_calorie_target: number; daily_protein_target: number },
+  savedMeals: { name: string; aliases: string[] | null }[],
+): Promise<Stage1Result | null> {
+  const mealList = savedMeals
+    .map(m => m.aliases?.length ? `${m.name} (aliases: ${m.aliases.join(', ')})` : m.name)
+
+  const systemPrompt = STAGE1_SYSTEM_PROMPT + `
 
 CURRENT CONTEXT:
 - Current weight: ${currentWeight}kg
-- Today's totals so far: ${todayCalories} cal, ${todayProtein}g protein
 - Daily targets: ${settings.daily_calorie_target} cal, ${settings.daily_protein_target}g protein
-- Saved recurring meals: ${recurringMeals.length ? recurringMeals.join('; ') : 'none yet'}`
+- Saved recurring meals: ${mealList.length ? mealList.join('; ') : 'none yet'}`
 
-    // Model selection: haiku for single-turn, sonnet for multi-turn
-    const model = MODEL
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...conversationHistory.slice(-5),
+    { role: 'user', content: message },
+  ]
 
-    // Build messages (cap at 6)
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...conversationHistory.slice(-5),
-      { role: 'user', content: message },
-    ]
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 50_000)
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 50_000)
-
-    let aiRes: Response
-    try {
-      aiRes = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'HTTP-Referer': 'https://nutrilog.vercel.app',
-          'X-Title': 'NutriLog',
-        },
-        body: JSON.stringify({ model, messages, temperature: 0.1 }),
-      })
-    } catch (err) {
-      clearTimeout(timeout)
-      if ((err as Error).name === 'AbortError') {
-        return res.status(504).json({ error: 'AI response timed out — try a shorter message or try again' })
-      }
-      throw err
-    }
+  let aiRes: Response
+  try {
+    aiRes = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://nutrilog.vercel.app',
+        'X-Title': 'NutriLog',
+      },
+      body: JSON.stringify({
+        model: STAGE1_MODEL,
+        messages,
+        temperature: 0.1,
+      }),
+    })
+  } catch (err) {
     clearTimeout(timeout)
-
-    if (!aiRes.ok) {
-      const errText = await aiRes.text()
-      console.error('OpenRouter error:', errText)
-      return res.status(502).json({ error: `AI service error: ${aiRes.status} ${errText.slice(0, 200)}` })
+    if ((err as Error).name === 'AbortError') {
+      console.error('[LogAPI] Stage 1 LLM timeout')
+      return null
     }
+    throw err
+  }
+  clearTimeout(timeout)
 
-    const aiData = await aiRes.json()
-    const rawContent = aiData.choices?.[0]?.message?.content ?? ''
+  if (!aiRes.ok) {
+    const errText = await aiRes.text()
+    console.error('[LogAPI] OpenRouter error:', errText.slice(0, 200))
+    return null
+  }
 
-    // Parse AI JSON response — try multiple extraction strategies
-    let parsed: AiResponse
-    try {
-      // Strategy 1: code block
-      const codeBlock = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/)
-      // Strategy 2: first { to last }
-      const braceMatch = rawContent.match(/\{[\s\S]*\}/)
-      const jsonStr = codeBlock?.[1]?.trim() ?? braceMatch?.[0] ?? rawContent.trim()
-      parsed = JSON.parse(jsonStr)
-    } catch {
-      console.error('Failed to parse AI response:', rawContent)
-      return res.status(502).json({ error: `Failed to parse AI response: ${rawContent.slice(0, 300)}` })
-    }
+  const aiData = await aiRes.json()
+  const rawContent = aiData.choices?.[0]?.message?.content ?? ''
 
-    // Handle DB writes based on status
-    if (parsed.status === 'ready_to_log') {
-      const entryData = {
-        raw_input: message,
-        meal_description: parsed.meal_description,
-        ingredients_json: parsed.ingredients,
-        calories: parsed.calories,
-        protein_g: parsed.protein_g,
-        fiber_g: parsed.fiber_g,
-        carbs_g: parsed.carbs_g,
-        fat_g: parsed.fat_g,
-      }
-
-      let entry, error
-      if (lastEntryId) {
-        // Amend existing entry
-        ;({ data: entry, error } = await supabase
-          .from('nutrition_log')
-          .update(entryData)
-          .eq('id', lastEntryId)
-          .select()
-          .single())
-      } else {
-        // New entry
-        ;({ data: entry, error } = await supabase
-          .from('nutrition_log')
-          .insert(entryData)
-          .select()
-          .single())
-      }
-
-      if (error) {
-        console.error('DB error:', error)
-        return res.status(500).json({ error: 'Failed to save entry' })
-      }
-
-      return res.json({
-        status: 'ready_to_log',
-        message: lastEntryId ? 'Meal updated!' : (parsed.notes || 'Meal logged!'),
-        logged_entry: entry,
-      })
-    }
-
-    if (parsed.status === 'needs_clarification') {
-      return res.json({
-        status: 'needs_clarification',
-        message: parsed.question,
-      })
-    }
-
-    if (parsed.status === 'save_recurring') {
-      const name = parsed.suggested_name ?? parsed.name ?? 'Unnamed meal'
-
-      // Use macros from the already-logged entry if available, otherwise fall back to AI response
-      let macros = {
-        meal_description: parsed.meal_description,
-        ingredients_json: parsed.ingredients,
-        calories: parsed.calories,
-        protein_g: parsed.protein_g,
-        fiber_g: parsed.fiber_g,
-        carbs_g: parsed.carbs_g,
-        fat_g: parsed.fat_g,
-      }
-
-      if (lastEntryId) {
-        const { data: existing } = await supabase
-          .from('nutrition_log')
-          .select('meal_description, ingredients_json, calories, protein_g, fiber_g, carbs_g, fat_g')
-          .eq('id', lastEntryId)
-          .single()
-        if (existing) {
-          macros = existing
-        }
-      }
-
-      // Save to recurring_meals (don't create a duplicate nutrition_log entry)
-      await supabase.from('recurring_meals').insert({
-        name,
-        ...macros,
-      })
-
-      return res.json({
-        status: 'save_recurring',
-        message: `Saved "${name}" as a recurring meal!`,
-      })
-    }
-
-    if (parsed.status === 'update_recurring') {
-      const name = parsed.name ?? ''
-
-      const { error } = await supabase
-        .from('recurring_meals')
-        .update({
-          meal_description: parsed.meal_description,
-          ingredients_json: parsed.ingredients,
-          calories: parsed.calories,
-          protein_g: parsed.protein_g,
-          fiber_g: parsed.fiber_g,
-          carbs_g: parsed.carbs_g,
-          fat_g: parsed.fat_g,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('name', name)
-
-      if (error) {
-        console.error('Recurring meal update error:', error)
-        return res.status(500).json({ error: 'Failed to update recurring meal' })
-      }
-
-      return res.json({
-        status: 'update_recurring',
-        message: `Updated "${name}"!`,
-      })
-    }
-
-    // Fallback
-    return res.json({ status: parsed.status, message: rawContent })
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('Handler error:', msg)
-    return res.status(500).json({ error: msg })
+  try {
+    const codeBlock = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/)
+    const braceMatch = rawContent.match(/\{[\s\S]*\}/)
+    const jsonStr = codeBlock?.[1]?.trim() ?? braceMatch?.[0] ?? rawContent.trim()
+    return JSON.parse(jsonStr) as Stage1Result
+  } catch {
+    console.error('[LogAPI] Failed to parse Stage 1 response:', rawContent.slice(0, 300))
+    return null
   }
 }
