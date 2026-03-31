@@ -156,7 +156,7 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
   }
 
   const apiKey = process.env.USDA_API_KEY || 'DEMO_KEY'
-  const url = `${USDA_API_URL}?query=${encodeURIComponent(foodName)}&pageSize=1&dataType=Foundation,SR%20Legacy&api_key=${apiKey}`
+  const url = `${USDA_API_URL}?query=${encodeURIComponent(foodName)}&pageSize=5&dataType=SR%20Legacy&api_key=${apiKey}`
 
   console.log(`[USDA] API call: "${foodName}"`)
 
@@ -164,10 +164,41 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
     const response = await fetch(url)
     if (!response.ok) { console.log(`[USDA] API error: ${response.status}`); return null }
 
-    const data = (await response.json()) as { foods?: Array<{ fdcId?: number; foodCategory?: string; foodNutrients?: Array<{ nutrientId: number; value: number }> }> }
+    const data = (await response.json()) as { foods?: Array<{ fdcId?: number; description?: string; foodCategory?: string; foodNutrients?: Array<{ nutrientId: number; value: number }> }> }
     if (!data.foods?.length) { console.log(`[USDA] No results: "${foodName}"`); return null }
 
-    const food = data.foods[0]
+    // Pick best match: score each result, prefer close description match,
+    // deprioritize derivatives (oil, powder, dried, extract) unless user asked for them
+    const derivativeWords = ['oil', 'powder', 'dried', 'extract', 'dehydrated', 'concentrate']
+    const searchLower = searchTerm.toLowerCase()
+    const searchWordsSet = new Set(searchLower.split(/\s+/))
+    const userWantsDerivative = derivativeWords.some(w => searchWordsSet.has(w))
+
+    const scored = data.foods.map((f, idx) => {
+      const desc = (f.description ?? '').toLowerCase()
+      let score = 0
+      // Exact match bonus
+      if (desc === searchLower) score += 100
+      // Starts with search term
+      else if (desc.startsWith(searchLower + ',') || desc.startsWith(searchLower + ' ')) score += 50
+      // Contains search term as a word
+      else if (desc.includes(searchLower)) score += 30
+      // Penalize derivative forms unless user asked for them
+      if (!userWantsDerivative) {
+        for (const dw of derivativeWords) {
+          if (desc.includes(dw)) { score -= 40; break }
+        }
+      }
+      // Shorter descriptions are often more "whole food"
+      score -= desc.length * 0.1
+      // Slight preference for earlier results (USDA relevance)
+      score -= idx * 2
+      return { food: f, score, desc }
+    })
+    scored.sort((a, b) => b.score - a.score)
+    console.log(`[USDA] Candidates for "${foodName}":`, scored.map(s => `${s.desc} (score=${s.score.toFixed(1)})`))
+
+    const food = scored[0].food
     const nutrients = food.foodNutrients ?? []
     const result: NutrientsPer100g = {
       calories: Math.round(extractNutrient(nutrients, NUTRIENT_IDS.ENERGY)),
