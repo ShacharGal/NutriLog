@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
-import { classifyInput } from '../src/lib/modificationClassifier'
-import { resolveIngredients } from '../src/lib/resolver'
-import { calculateTotals, atwaterCheck, atwaterCorrect } from '../src/lib/validation'
-import { findRecurringMeal } from '../src/lib/personalDb'
-import type { LLMParsedItem, ResolvedIngredient, NutrientsPer100g, SourceTier } from '../src/types/nutrition'
+import { classifyInput } from './lib/modificationClassifier'
+import { resolveIngredients } from './lib/resolver'
+import { calculateTotals, atwaterCheck, atwaterCorrect } from './lib/validation'
+import { findRecurringMeal } from './lib/personalDb'
+import type { LLMParsedItem, ResolvedIngredient, NutrientsPer100g, SourceTier } from './lib/types'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
