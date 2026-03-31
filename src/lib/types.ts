@@ -12,26 +12,14 @@ export interface NutritionLog {
   recurring_meal_ref: string | null
 }
 
-export interface RecurringMeal {
-  id: string
-  created_at: string
-  updated_at: string
-  name: string
-  aliases: string[] | null
-  meal_description: string | null
-  ingredients_json: Record<string, unknown>[] | null
-  calories: number | null
-  protein_g: number | null
-  fiber_g: number | null
-  carbs_g: number | null
-  fat_g: number | null
-}
-
-export interface PersonalIngredient {
+export interface MyFood {
   id: string
   name: string
   aliases: string[] | null
+  description: string | null
+  ingredients_json: { name: string; weight_g: number }[] | null
   nutrients_per_100g: { calories: number; protein: number; carbs: number; fat: number; fiber: number }
+  total_weight_g: number | null
   source: string
   created_at: string
 }

@@ -247,25 +247,25 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
 
 // ─── Personal DB ─────────────────────────────────────────────────────────────
 
-async function findPersonalIngredient(foodName: string): Promise<{ nutrients_per_100g: NutrientsPer100g } | null> {
+async function findMyFood(foodName: string): Promise<{ nutrients_per_100g: NutrientsPer100g } | null> {
   const term = foodName.trim()
   const { data } = await supabase
-    .from('personal_ingredients')
+    .from('my_foods')
     .select('nutrients_per_100g')
     .or(`name.ilike.${term},aliases.cs.{${term.toLowerCase()}}`)
     .limit(1)
     .maybeSingle()
 
-  if (data) { console.log(`[PersonalDB] Hit: "${term}"`); return { nutrients_per_100g: data.nutrients_per_100g as NutrientsPer100g } }
+  if (data) { console.log(`[MyFoods] Hit: "${term}"`); return { nutrients_per_100g: data.nutrients_per_100g as NutrientsPer100g } }
   return null
 }
 
 async function findRecurringMeal(mealName: string): Promise<Record<string, unknown> | null> {
   const term = mealName.trim()
-  const { data: byName } = await supabase.from('recurring_meals').select('*').ilike('name', term).limit(1).maybeSingle()
+  const { data: byName } = await supabase.from('my_foods').select('*').ilike('name', term).limit(1).maybeSingle()
   if (byName) return byName as Record<string, unknown>
 
-  const { data: byAlias } = await supabase.from('recurring_meals').select('*').contains('aliases', [term.toLowerCase()]).limit(1).maybeSingle()
+  const { data: byAlias } = await supabase.from('my_foods').select('*').contains('aliases', [term.toLowerCase()]).limit(1).maybeSingle()
   if (byAlias) return byAlias as Record<string, unknown>
   return null
 }
@@ -277,8 +277,8 @@ async function resolveIngredients(items: LLMParsedItem[]): Promise<ResolvedIngre
   return Promise.all(items.map(async (item): Promise<ResolvedIngredient> => {
     const name = item.food_name
 
-    // Tier 1: Personal DB
-    const personal = await findPersonalIngredient(name)
+    // Tier 1: My Foods
+    const personal = await findMyFood(name)
     if (personal) return { food_name: name, weight_g: item.quantity_grams, nutrients_per_100g: clampNutrients(personal.nutrients_per_100g), source: 'personal' }
 
     // Tier 2: USDA
@@ -388,7 +388,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const [weightRes, todayRes, recurringRes, settingsRes] = await Promise.all([
       supabase.from('weight_log').select('weight_kg').order('logged_at', { ascending: false }).limit(1),
       supabase.from('nutrition_log').select('calories, protein_g').gte('created_at', new Date().toISOString().slice(0, 10)),
-      supabase.from('recurring_meals').select('name, aliases'),
+      supabase.from('my_foods').select('name, aliases'),
       supabase.from('user_settings').select('*').eq('id', 1).single(),
     ])
 
@@ -409,11 +409,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (classification.classification === 'EXACT_MATCH' && classification.matchedMeal) {
       const meal = await findRecurringMeal(classification.matchedMeal)
       if (meal) {
+        const n = meal.nutrients_per_100g as NutrientsPer100g
+        const w = (meal.total_weight_g as number) || 100
+        const scale = w / 100
         const entryData = {
-          raw_input: message, meal_description: meal.meal_description as string,
-          ingredients_json: meal.ingredients_json, calories: meal.calories as number,
-          protein_g: meal.protein_g as number, fiber_g: meal.fiber_g as number,
-          carbs_g: meal.carbs_g as number, fat_g: meal.fat_g as number,
+          raw_input: message, meal_description: (meal.description as string) || (meal.name as string),
+          ingredients_json: meal.ingredients_json,
+          calories: Math.round(n.calories * scale),
+          protein_g: Math.round(n.protein * scale * 10) / 10,
+          fiber_g: Math.round(n.fiber * scale * 10) / 10,
+          carbs_g: Math.round(n.carbs * scale * 10) / 10,
+          fat_g: Math.round(n.fat * scale * 10) / 10,
           recurring_meal_ref: meal.name as string, source_tier: 'personal' as SourceTier,
         }
 

@@ -26,22 +26,17 @@ const FALLBACK_MODEL = 'openai/gpt-4o-mini'
 const USDA_API_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search'
 const NUTRIENT_IDS = { ENERGY: 1008, PROTEIN: 1003, CARBS: 1005, FAT: 1004, FIBER: 1079 } as const
 
-const STAGE1_SYSTEM_PROMPT = `You are a meal-ingredient extraction assistant for a nutrition tracker.
-Your ONLY job is to parse a meal/recipe description into a list of individual ingredients with estimated gram weights.
-You do NOT calculate calories, protein, or any macros — that is handled by a separate lookup step.
+const PARSE_SYSTEM_PROMPT = `You are a food/recipe extraction assistant for a nutrition tracker.
+Your job is to parse a food description into individual ingredients with gram weights, AND generate a clean short name for it.
 
 USER PROFILE:
-- Male, 185cm
 - Cuisine context: Israeli/Mediterranean home cooking is typical
-
-DIETARY CONTEXT:
 - Does NOT eat cow dairy. Sheep and goat dairy are fine.
-- Avoids gluten and processed foods (not strict, but preferred)
 
 LANGUAGE:
 - The user writes in Hebrew, English, or a mix of both.
 - All JSON output fields MUST be in English.
-- For Israeli/Middle-Eastern foods, transliterate (e.g., לבנה → "labneh", פרגית → "chicken thigh/pargiyot").
+- For Israeli/Middle-Eastern foods, transliterate (e.g., לבנה → "labneh", פרגית → "chicken thigh").
 - Clarification questions: respond in the same language the user used.
 
 PORTION DEFAULTS:
@@ -51,17 +46,20 @@ PORTION DEFAULTS:
 - 1 pita = 60g, 1 cup rice (cooked) = 200g
 
 BEHAVIOR:
-1. Break down the meal into ALL individual ingredients with gram weights.
+1. Generate a clean, short English name for the food (e.g., "buckwheat granola", "shakshuka", "chicken breast").
+   - Strip "my", "homemade", verbose descriptions. Keep it concise and recognizable.
+   - For single ingredients, use the standard food name (e.g., "chicken breast" not "grilled chicken breast fillet").
+2. Break down into ALL individual ingredients with gram weights.
    - Include cooking fats even if not explicitly mentioned.
    - Decompose composite dishes into components.
-2. If too vague, respond with needs_clarification. Max 1 question.
-   - Simple meals (2 eggs, a banana): always parse immediately.
+3. For simple single ingredients (e.g., "chicken breast", "banana"), return just one item.
+4. If too vague to identify, respond with needs_clarification. Max 1 question.
 
 OUTPUT (valid JSON only):
-{"status":"parsed","items":[{"food_name":"string","quantity_grams":number}]}
+{"status":"parsed","recipe_name":"string","items":[{"food_name":"string","quantity_grams":number}]}
 {"status":"needs_clarification","question":"string"}`
 
-// ─── Helpers (duplicated — Vercel single-file constraint) ──────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function clampNutrients(p: NutrientsPer100g): NutrientsPer100g {
   const c = (v: number, max: number) => Math.max(0, Math.min(v, max))
@@ -76,24 +74,6 @@ function atwaterCheck(p: NutrientsPer100g): boolean {
 
 function atwaterCorrect(p: NutrientsPer100g): NutrientsPer100g {
   return { ...p, calories: Math.round(4 * p.protein + 4 * p.carbs + 9 * p.fat + 2 * p.fiber) }
-}
-
-function calculateTotals(items: ResolvedIngredient[]): NutrientsPer100g {
-  const t: NutrientsPer100g = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }
-  for (const item of items) {
-    const f = item.weight_g / 100
-    t.calories += item.nutrients_per_100g.calories * f
-    t.protein += item.nutrients_per_100g.protein * f
-    t.carbs += item.nutrients_per_100g.carbs * f
-    t.fat += item.nutrients_per_100g.fat * f
-    t.fiber += item.nutrients_per_100g.fiber * f
-  }
-  t.calories = Math.round(t.calories)
-  t.protein = Math.round(t.protein * 10) / 10
-  t.carbs = Math.round(t.carbs * 10) / 10
-  t.fat = Math.round(t.fat * 10) / 10
-  t.fiber = Math.round(t.fiber * 10) / 10
-  return t
 }
 
 // ─── USDA ───────────────────────────────────────────────────────────────────
@@ -127,14 +107,13 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
     .maybeSingle()
 
   if (cached) {
-    console.log(`[SaveRecipe] USDA cache hit: "${searchTerm}"`)
+    console.log(`[SaveFood] USDA cache hit: "${searchTerm}"`)
     return cached.nutrients_per_100g as NutrientsPer100g
   }
 
   const apiKey = process.env.USDA_API_KEY || 'DEMO_KEY'
   const url = `${USDA_API_URL}?query=${encodeURIComponent(queryTerm)}&pageSize=5&dataType=SR%20Legacy&api_key=${apiKey}`
-
-  console.log(`[SaveRecipe] USDA API: "${queryTerm}"`)
+  console.log(`[SaveFood] USDA API: "${queryTerm}"`)
 
   try {
     const response = await fetch(url)
@@ -181,23 +160,23 @@ async function searchUSDA(foodName: string): Promise<NutrientsPer100g | null> {
     })
     return result
   } catch (err) {
-    console.log(`[SaveRecipe] USDA error:`, err instanceof Error ? err.message : err)
+    console.log(`[SaveFood] USDA error:`, err instanceof Error ? err.message : err)
     return null
   }
 }
 
-// ─── Personal DB ────────────────────────────────────────────────────────────
+// ─── My Foods DB (Tier 1) ───────────────────────────────────────────────────
 
-async function findPersonalIngredient(foodName: string): Promise<{ nutrients_per_100g: NutrientsPer100g } | null> {
+async function findMyFood(foodName: string): Promise<{ nutrients_per_100g: NutrientsPer100g } | null> {
   const term = foodName.trim()
   const { data } = await supabase
-    .from('personal_ingredients')
+    .from('my_foods')
     .select('nutrients_per_100g')
     .or(`name.ilike.${term},aliases.cs.{${term.toLowerCase()}}`)
     .limit(1)
     .maybeSingle()
 
-  if (data) { console.log(`[SaveRecipe] Personal DB hit: "${term}"`); return { nutrients_per_100g: data.nutrients_per_100g as NutrientsPer100g } }
+  if (data) { console.log(`[SaveFood] My Foods hit: "${term}"`); return { nutrients_per_100g: data.nutrients_per_100g as NutrientsPer100g } }
   return null
 }
 
@@ -206,7 +185,7 @@ async function findPersonalIngredient(foodName: string): Promise<{ nutrients_per
 async function estimateNutritionLLM(foodName: string): Promise<NutrientsPer100g | null> {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) return null
-  console.log(`[SaveRecipe] LLM fallback: "${foodName}"`)
+  console.log(`[SaveFood] LLM fallback: "${foodName}"`)
   try {
     const response = await fetch(OPENROUTER_URL, {
       method: 'POST',
@@ -232,13 +211,13 @@ async function estimateNutritionLLM(foodName: string): Promise<NutrientsPer100g 
 // ─── Resolver ───────────────────────────────────────────────────────────────
 
 async function resolveIngredients(items: LLMParsedItem[]): Promise<ResolvedIngredient[]> {
-  console.log(`[SaveRecipe] Resolving ${items.length} items`)
+  console.log(`[SaveFood] Resolving ${items.length} items`)
   return Promise.all(items.map(async (item): Promise<ResolvedIngredient> => {
     const name = item.food_name
 
-    // Tier 1: Personal DB
-    const personal = await findPersonalIngredient(name)
-    if (personal) return { food_name: name, weight_g: item.quantity_grams, nutrients_per_100g: clampNutrients(personal.nutrients_per_100g), source: 'personal' }
+    // Tier 1: My Foods
+    const saved = await findMyFood(name)
+    if (saved) return { food_name: name, weight_g: item.quantity_grams, nutrients_per_100g: clampNutrients(saved.nutrients_per_100g), source: 'personal' }
 
     // Tier 2: USDA
     const usda = await searchUSDA(name)
@@ -248,20 +227,21 @@ async function resolveIngredients(items: LLMParsedItem[]): Promise<ResolvedIngre
     const llm = await estimateNutritionLLM(name)
     if (llm) return { food_name: name, weight_g: item.quantity_grams, nutrients_per_100g: clampNutrients(llm), source: 'llm' }
 
-    console.log(`[SaveRecipe] No data for "${name}", using zeros`)
+    console.log(`[SaveFood] No data for "${name}", using zeros`)
     return { food_name: name, weight_g: item.quantity_grams, nutrients_per_100g: { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }, source: 'llm' }
   }))
 }
 
-// ─── Stage 1: Parse input into ingredients ─────────────────────────────────
+// ─── Stage 1: Parse input ───────────────────────────────────────────────────
 
 interface Stage1Result {
   status: 'parsed' | 'needs_clarification'
+  recipe_name?: string
   items?: LLMParsedItem[]
   question?: string
 }
 
-async function parseRecipe(message: string): Promise<Stage1Result | null> {
+async function parseFood(message: string): Promise<Stage1Result | null> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 50_000)
 
@@ -273,14 +253,14 @@ async function parseRecipe(message: string): Promise<Stage1Result | null> {
       body: JSON.stringify({
         model: STAGE1_MODEL, temperature: 0.1,
         messages: [
-          { role: 'system', content: STAGE1_SYSTEM_PROMPT },
+          { role: 'system', content: PARSE_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
       }),
     })
   } catch (err) {
     clearTimeout(timeout)
-    if ((err as Error).name === 'AbortError') console.error('[SaveRecipe] Stage 1 timeout')
+    if ((err as Error).name === 'AbortError') console.error('[SaveFood] Stage 1 timeout')
     return null
   }
   clearTimeout(timeout)
@@ -296,7 +276,7 @@ async function parseRecipe(message: string): Promise<Stage1Result | null> {
     const jsonStr = codeBlock?.[1]?.trim() ?? braceMatch?.[0] ?? rawContent.trim()
     return JSON.parse(jsonStr) as Stage1Result
   } catch {
-    console.error('[SaveRecipe] Parse failed:', rawContent.slice(0, 300))
+    console.error('[SaveFood] Parse failed:', rawContent.slice(0, 300))
     return null
   }
 }
@@ -310,10 +290,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
   try {
-    // ─── GET: list all recurring meals ──────────────────────────────────
+    // ─── GET: list all my foods ─────────────────────────────────────────
     if (req.method === 'GET') {
       const { data, error } = await supabase
-        .from('recurring_meals')
+        .from('my_foods')
         .select('*')
         .order('name', { ascending: true })
 
@@ -321,14 +301,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.json(data)
     }
 
-    // ─── POST: parse + resolve + save recipe ────────────────────────────
+    // ─── POST: parse + resolve + save food ──────────────────────────────
     if (req.method === 'POST') {
       const { message } = req.body as { message: string }
       if (!message) return res.status(400).json({ error: 'message is required' })
 
-      console.log(`[SaveRecipe] Input: "${message}"`)
+      console.log(`[SaveFood] Input: "${message}"`)
 
-      const parsed = await parseRecipe(message)
+      const parsed = await parseFood(message)
       if (!parsed) return res.status(502).json({ error: 'Failed to parse input' })
 
       if (parsed.status === 'needs_clarification') {
@@ -339,58 +319,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(502).json({ error: 'Could not identify any ingredients' })
       }
 
-      console.log(`[SaveRecipe] Parsed ${parsed.items.length} items`)
+      const recipeName = (parsed.recipe_name || parsed.items[0].food_name).toLowerCase().trim()
+      const isComposite = parsed.items.length > 1
 
-      // Resolve all ingredients
+      console.log(`[SaveFood] "${recipeName}" — ${parsed.items.length} items, composite=${isComposite}`)
+
+      // Resolve all sub-ingredients
       const resolvedItems = await resolveIngredients(parsed.items)
 
-      // Calculate totals & validate
-      let totals = calculateTotals(resolvedItems)
-      if (!atwaterCheck(totals)) {
-        console.log('[SaveRecipe] Atwater correction applied')
-        totals = atwaterCorrect(totals)
+      let nutrientsPer100g: NutrientsPer100g
+      let totalWeightG: number | null = null
+      let ingredientsJson: { name: string; weight_g: number }[] | null = null
+      let source: string
+
+      if (isComposite) {
+        // Composite food: calculate totals then derive per-100g
+        const totalWeight = resolvedItems.reduce((sum, i) => sum + i.weight_g, 0)
+        const totals: NutrientsPer100g = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }
+        for (const item of resolvedItems) {
+          const f = item.weight_g / 100
+          totals.calories += item.nutrients_per_100g.calories * f
+          totals.protein += item.nutrients_per_100g.protein * f
+          totals.carbs += item.nutrients_per_100g.carbs * f
+          totals.fat += item.nutrients_per_100g.fat * f
+          totals.fiber += item.nutrients_per_100g.fiber * f
+        }
+
+        // Derive per-100g from totals
+        const scale = totalWeight > 0 ? 100 / totalWeight : 1
+        nutrientsPer100g = {
+          calories: Math.round(totals.calories * scale),
+          protein: Math.round(totals.protein * scale * 10) / 10,
+          carbs: Math.round(totals.carbs * scale * 10) / 10,
+          fat: Math.round(totals.fat * scale * 10) / 10,
+          fiber: Math.round(totals.fiber * scale * 10) / 10,
+        }
+
+        if (!atwaterCheck(nutrientsPer100g)) {
+          nutrientsPer100g = atwaterCorrect(nutrientsPer100g)
+        }
+
+        totalWeightG = totalWeight
+        ingredientsJson = resolvedItems.map(i => ({ name: i.food_name, weight_g: i.weight_g }))
+        source = 'homemade'
+      } else {
+        // Simple food: use resolved nutrients directly
+        nutrientsPer100g = clampNutrients(resolvedItems[0].nutrients_per_100g)
+        source = resolvedItems[0].source === 'personal' ? 'usda' : resolvedItems[0].source
       }
 
-      const mealDescription = resolvedItems.map(i => `${i.food_name} (${i.weight_g}g)`).join(', ')
-      const recipeName = message.trim()
+      const description = isComposite
+        ? resolvedItems.map(i => `${i.food_name} (${i.weight_g}g)`).join(', ')
+        : null
 
-      // Upsert into recurring_meals
-      const { data: saved, error } = await supabase
-        .from('recurring_meals')
+      // Upsert into my_foods
+      const { error } = await supabase
+        .from('my_foods')
         .upsert({
-          name: recipeName.toLowerCase(),
-          meal_description: mealDescription,
-          ingredients_json: resolvedItems.map(i => ({ name: i.food_name, amount: `${i.weight_g}g` })),
-          calories: totals.calories,
-          protein_g: totals.protein,
-          fiber_g: totals.fiber,
-          carbs_g: totals.carbs,
-          fat_g: totals.fat,
+          name: recipeName,
+          description,
+          ingredients_json: ingredientsJson,
+          nutrients_per_100g: nutrientsPer100g,
+          total_weight_g: totalWeightG,
+          source,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'name' })
-        .select()
-        .single()
 
       if (error) {
-        console.error('[SaveRecipe] DB error:', error.message)
-        return res.status(500).json({ error: 'Failed to save recipe' })
+        console.error('[SaveFood] DB error:', error.message)
+        return res.status(500).json({ error: 'Failed to save food' })
       }
 
-      console.log(`[SaveRecipe] Saved: "${recipeName}" — ${totals.calories} cal`)
+      console.log(`[SaveFood] Saved: "${recipeName}" [${source}]`)
+
+      // Calculate display totals for composite
+      const displayTotals = isComposite && totalWeightG ? {
+        calories: Math.round(nutrientsPer100g.calories * totalWeightG / 100),
+        protein: Math.round(nutrientsPer100g.protein * totalWeightG / 100 * 10) / 10,
+        carbs: Math.round(nutrientsPer100g.carbs * totalWeightG / 100 * 10) / 10,
+        fat: Math.round(nutrientsPer100g.fat * totalWeightG / 100 * 10) / 10,
+        fiber: Math.round(nutrientsPer100g.fiber * totalWeightG / 100 * 10) / 10,
+      } : null
 
       return res.json({
         status: 'saved',
-        message: `Saved "${recipeName}" as a recipe!`,
-        recipe: {
-          id: saved.id,
+        message: isComposite
+          ? `Saved "${recipeName}" (${resolvedItems.length} ingredients, ${displayTotals?.calories ?? 0} cal total)`
+          : `Saved "${recipeName}" to your foods!`,
+        food: {
           name: recipeName,
-          ingredients: resolvedItems.map(i => ({
-            name: i.food_name,
-            weight_g: i.weight_g,
-            nutrients_per_100g: i.nutrients_per_100g,
-            source: i.source,
-          })),
-          totals,
+          nutrients_per_100g: nutrientsPer100g,
+          ingredients: ingredientsJson,
+          total_weight_g: totalWeightG,
+          totals: displayTotals,
+          source,
         },
       })
     }
@@ -400,7 +422,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = req.query.id as string
       if (!id) return res.status(400).json({ error: 'Missing query param: id' })
 
-      const { error } = await supabase.from('recurring_meals').delete().eq('id', id)
+      const { error } = await supabase.from('my_foods').delete().eq('id', id)
       if (error) return res.status(500).json({ error: error.message })
       return res.json({ success: true })
     }
@@ -409,7 +431,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[SaveRecipe] Handler error:', msg)
+    console.error('[SaveFood] Handler error:', msg)
     return res.status(500).json({ error: msg })
   }
 }

@@ -15,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       console.log('[RecurringMeals] GET all')
       const { data, error } = await supabase
-        .from('recurring_meals')
+        .from('my_foods')
         .select('*')
         .order('name', { ascending: true })
 
@@ -53,7 +53,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`[RecurringMeals] POST: "${name}"`)
 
       const { data, error } = await supabase
-        .from('recurring_meals')
+        .from('my_foods')
         .insert({
           name,
           meal_description: meal_description ?? null,
@@ -86,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`[RecurringMeals] DELETE: ${id}`)
 
       const { error } = await supabase
-        .from('recurring_meals')
+        .from('my_foods')
         .delete()
         .eq('id', id)
 
