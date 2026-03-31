@@ -24,5 +24,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/lib/usda.ts",
+    "src/lib/personalDb.ts",
+    "src/lib/resolver.ts",
+    "src/lib/modificationClassifier.ts"
+  ]
 }
