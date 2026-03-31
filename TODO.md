@@ -118,8 +118,8 @@ Mobile-first PWA (Android) for logging meals via natural language chat. Two-stag
 ## Remaining Original Steps (post-pivot)
 
 ### Step 8b — Remaining API Routes
-- [ ] api/recurring-meals.ts — GET/POST/DELETE recurring meals
-- [ ] api/settings.ts — GET/PUT user settings + weight log
+- [x] api/recurring-meals.ts — GET/POST/DELETE recurring meals
+- [x] api/settings.ts — GET/PUT user settings + weight log
 
 ### Step 9 — GraphsTab
 - [ ] src/components/GraphsTab.tsx (using Recharts)
