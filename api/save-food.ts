@@ -53,7 +53,15 @@ BEHAVIOR:
    - Include cooking fats even if not explicitly mentioned.
    - Decompose composite dishes into components.
 3. For simple single ingredients (e.g., "chicken breast", "banana"), return just one item.
-4. If too vague to identify, respond with needs_clarification. Max 1 question.
+4. CLARIFICATION RULES:
+   - If the user describes a MULTI-INGREDIENT recipe (3+ ingredients) WITHOUT specific gram weights for most of them, you MUST respond with needs_clarification.
+   - Ask about approximate proportions of key ingredients AND total batch/serving size in one question.
+   - Example: user says "my granola is buckwheat, oil, nuts, seeds, maple, cinnamon" → ask "What are the approximate amounts of each ingredient? For example: 100g buckwheat, 50g nuts, etc. Also, what's the total weight of one batch or serving?"
+   - EXCEPTIONS — parse directly without asking:
+     * Single ingredients (e.g., "chicken breast", "banana")
+     * Well-known dishes with standard ratios (e.g., "shakshuka", "hummus", "omelette")
+     * When the user provides specific gram weights for ALL ingredients
+   - Max 1 question per response. Ask for all missing info at once.
 
 OUTPUT (valid JSON only):
 {"status":"parsed","recipe_name":"string","items":[{"food_name":"string","quantity_grams":number}]}
@@ -281,6 +289,54 @@ async function parseFood(message: string): Promise<Stage1Result | null> {
   }
 }
 
+// ─── Edit Detection ────────────────────────────────────────────────────────
+
+const EDIT_CLASSIFY_PROMPT = `You classify user messages about food/recipe edits.
+The user may want to:
+1. SCALE a food to a new serving/total weight (e.g., "edit X such that serving is 150g", "make X 200g", "change X to 100 gram serving")
+2. MODIFY ingredients in a food (e.g., "add oats to X", "remove nuts from X", "use coconut oil instead of olive oil in X")
+3. Something else — NOT an edit of an existing food (e.g., creating a new food, logging a meal)
+
+Return ONLY valid JSON, nothing else:
+{"is_edit":true,"food_name":"name","edit_type":"scale","target_weight_g":150}
+{"is_edit":true,"food_name":"name","edit_type":"modify","description":"what to change"}
+{"is_edit":false}`
+
+interface EditClassification {
+  is_edit: boolean
+  food_name?: string
+  edit_type?: 'scale' | 'modify'
+  target_weight_g?: number | null
+  description?: string
+}
+
+async function classifyEdit(message: string): Promise<EditClassification> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
+    const response = await fetch(OPENROUTER_URL, {
+      method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': 'https://nutrilog.vercel.app', 'X-Title': 'NutriLog' },
+      body: JSON.stringify({
+        model: STAGE1_MODEL, temperature: 0,
+        messages: [
+          { role: 'system', content: EDIT_CLASSIFY_PROMPT },
+          { role: 'user', content: message },
+        ],
+      }),
+    })
+    clearTimeout(timeout)
+    if (!response.ok) return { is_edit: false }
+    const data = await response.json()
+    const raw = data.choices?.[0]?.message?.content ?? ''
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (!match) return { is_edit: false }
+    return JSON.parse(match[0]) as EditClassification
+  } catch {
+    return { is_edit: false }
+  }
+}
+
 // ─── Main Handler ───────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -308,7 +364,90 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       console.log(`[SaveFood] Input: "${message}"`)
 
-      const parsed = await parseFood(message)
+      // ─── Edit detection: scale/modify existing foods ──────────────────
+      const editInfo = await classifyEdit(message)
+
+      if (editInfo.is_edit && editInfo.food_name) {
+        const foodName = editInfo.food_name.toLowerCase().trim()
+        console.log(`[SaveFood] Edit detected: "${foodName}", type=${editInfo.edit_type}, target=${editInfo.target_weight_g}g`)
+
+        const { data: existing } = await supabase
+          .from('my_foods')
+          .select('*')
+          .ilike('name', foodName)
+          .limit(1)
+          .maybeSingle()
+
+        if (!existing) {
+          return res.json({ status: 'needs_clarification', message: `I couldn't find "${editInfo.food_name}" in your foods. Can you check the name?` })
+        }
+
+        if (editInfo.edit_type === 'scale' && editInfo.target_weight_g && existing.ingredients_json) {
+          const oldIngredients = existing.ingredients_json as { name: string; weight_g: number }[]
+          const oldTotal = Number(existing.total_weight_g) || oldIngredients.reduce((s, i) => s + i.weight_g, 0)
+          const newTotal = editInfo.target_weight_g
+          const scaleFactor = newTotal / oldTotal
+
+          const newIngredients = oldIngredients.map(i => ({
+            name: i.name,
+            weight_g: Math.round(i.weight_g * scaleFactor * 10) / 10,
+          }))
+
+          // nutrients_per_100g is invariant under scaling — density doesn't change
+          const nutrientsPer100g = existing.nutrients_per_100g as NutrientsPer100g
+
+          const { error } = await supabase
+            .from('my_foods')
+            .upsert({
+              name: existing.name,
+              description: newIngredients.map(i => `${i.name} (${i.weight_g}g)`).join(', '),
+              ingredients_json: newIngredients,
+              nutrients_per_100g: nutrientsPer100g,
+              total_weight_g: newTotal,
+              source: existing.source,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'name' })
+
+          if (error) {
+            console.error('[SaveFood] Edit DB error:', error.message)
+            return res.status(500).json({ error: 'Failed to update food' })
+          }
+
+          const displayTotals = {
+            calories: Math.round(nutrientsPer100g.calories * newTotal / 100),
+            protein: Math.round(nutrientsPer100g.protein * newTotal / 100 * 10) / 10,
+            carbs: Math.round(nutrientsPer100g.carbs * newTotal / 100 * 10) / 10,
+            fat: Math.round(nutrientsPer100g.fat * newTotal / 100 * 10) / 10,
+            fiber: Math.round(nutrientsPer100g.fiber * newTotal / 100 * 10) / 10,
+          }
+
+          console.log(`[SaveFood] Scaled "${existing.name}": ${oldTotal}g → ${newTotal}g`)
+
+          return res.json({
+            status: 'saved',
+            message: `Saved "${existing.name}" (${newIngredients.length} ingredients, ${displayTotals.calories} cal total)`,
+            food: {
+              name: existing.name,
+              nutrients_per_100g: nutrientsPer100g,
+              ingredients: newIngredients,
+              total_weight_g: newTotal,
+              totals: displayTotals,
+              source: existing.source,
+            },
+          })
+        }
+
+        // For 'modify' edits: inject existing recipe context so LLM can modify with awareness
+        if (editInfo.edit_type === 'modify' && existing.ingredients_json) {
+          const ingredients = existing.ingredients_json as { name: string; weight_g: number }[]
+          const context = `EXISTING RECIPE "${existing.name}" (${existing.total_weight_g}g total): ${ingredients.map(i => `${i.name} ${i.weight_g}g`).join(', ')}.\nUSER REQUEST: ${message}`
+          console.log(`[SaveFood] Modify edit — injecting existing recipe context`)
+          // Fall through to parseFood with enriched message
+          req.body.message = context
+        }
+      }
+
+      const parsed = await parseFood(req.body.message ?? message)
       if (!parsed) return res.status(502).json({ error: 'Failed to parse input' })
 
       if (parsed.status === 'needs_clarification') {
