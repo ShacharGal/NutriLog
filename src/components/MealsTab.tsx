@@ -22,6 +22,8 @@ export default function MealsTab() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const [messages, setMessages] = useState<FoodChatMessage[]>([])
+  const [history, setHistory] = useState<{role: 'user'|'assistant', content: string}[]>([])
+  const [lastSavedFoodName, setLastSavedFoodName] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -65,7 +67,7 @@ export default function MealsTab() {
       const res = await fetch('/api/save-food', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, conversationHistory: history.slice(-6), lastSavedFoodName }),
       })
 
       const data = await res.json()
@@ -77,6 +79,10 @@ export default function MealsTab() {
 
       if (data.status === 'needs_clarification') {
         setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        setHistory(prev => [...prev,
+          { role: 'user' as const, content: text },
+          { role: 'assistant' as const, content: data.message },
+        ].slice(-6))
         return
       }
 
@@ -86,7 +92,13 @@ export default function MealsTab() {
         food: data.food,
       }])
 
+      setHistory(prev => [...prev,
+        { role: 'user' as const, content: text },
+        { role: 'assistant' as const, content: data.message },
+      ].slice(-6))
+
       if (data.food) {
+        setLastSavedFoodName(data.food.name)
         await loadFoods()
       }
     } catch {
@@ -298,7 +310,7 @@ export default function MealsTab() {
       <div className="border-t border-slate-700 px-4 py-3 pb-[env(safe-area-inset-bottom)]">
         {messages.length > 0 && (
           <button
-            onClick={() => setMessages([])}
+            onClick={() => { setMessages([]); setHistory([]); setLastSavedFoodName(null) }}
             className="w-full mb-2 text-xs text-slate-400 border border-slate-600 rounded-full py-1.5 hover:text-green-400 hover:border-green-500"
           >
             + Add more foods

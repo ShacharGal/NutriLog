@@ -15,6 +15,10 @@ interface ResolvedIngredient {
   food_name: string; weight_g: number; nutrients_per_100g: NutrientsPer100g; source: 'personal' | 'usda' | 'llm'
 }
 
+interface ChatMessage {
+  role: 'user' | 'assistant'; content: string
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!)
@@ -249,7 +253,7 @@ interface Stage1Result {
   question?: string
 }
 
-async function parseFood(message: string): Promise<Stage1Result | null> {
+async function parseFood(message: string, conversationHistory: ChatMessage[] = []): Promise<Stage1Result | null> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 50_000)
 
@@ -262,6 +266,7 @@ async function parseFood(message: string): Promise<Stage1Result | null> {
         model: STAGE1_MODEL, temperature: 0.1,
         messages: [
           { role: 'system', content: PARSE_SYSTEM_PROMPT },
+          ...conversationHistory.slice(-4),
           { role: 'user', content: message },
         ],
       }),
@@ -310,7 +315,7 @@ interface EditClassification {
   description?: string
 }
 
-async function classifyEdit(message: string): Promise<EditClassification> {
+async function classifyEdit(message: string, conversationHistory: ChatMessage[] = []): Promise<EditClassification> {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15_000)
@@ -321,6 +326,7 @@ async function classifyEdit(message: string): Promise<EditClassification> {
         model: STAGE1_MODEL, temperature: 0,
         messages: [
           { role: 'system', content: EDIT_CLASSIFY_PROMPT },
+          ...conversationHistory.slice(-4),
           { role: 'user', content: message },
         ],
       }),
@@ -359,24 +365,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ─── POST: parse + resolve + save food ──────────────────────────────
     if (req.method === 'POST') {
-      const { message } = req.body as { message: string }
+      const { message, conversationHistory = [], lastSavedFoodName } = req.body as { message: string; conversationHistory: ChatMessage[]; lastSavedFoodName?: string }
       if (!message) return res.status(400).json({ error: 'message is required' })
 
       console.log(`[SaveFood] Input: "${message}"`)
 
       // ─── Edit detection: scale/modify existing foods ──────────────────
-      const editInfo = await classifyEdit(message)
+      const editInfo = await classifyEdit(message, conversationHistory)
 
       if (editInfo.is_edit && editInfo.food_name) {
         const foodName = editInfo.food_name.toLowerCase().trim()
         console.log(`[SaveFood] Edit detected: "${foodName}", type=${editInfo.edit_type}, target=${editInfo.target_weight_g}g`)
 
-        const { data: existing } = await supabase
+        let { data: existing } = await supabase
           .from('my_foods')
           .select('*')
           .ilike('name', foodName)
           .limit(1)
           .maybeSingle()
+
+        // Fallback: user may refer to the food by a casual name (e.g. "breakfast bowl")
+        // while it was saved under a generated name (e.g. "chia pudding with yogurt and granola")
+        if (!existing && lastSavedFoodName) {
+          console.log(`[SaveFood] Food "${foodName}" not found, trying lastSavedFoodName: "${lastSavedFoodName}"`)
+          const { data: fallback } = await supabase
+            .from('my_foods')
+            .select('*')
+            .ilike('name', lastSavedFoodName)
+            .limit(1)
+            .maybeSingle()
+          if (fallback) existing = fallback
+        }
 
         if (!existing) {
           return res.json({ status: 'needs_clarification', message: `I couldn't find "${editInfo.food_name}" in your foods. Can you check the name?` })
@@ -447,7 +466,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      const parsed = await parseFood(req.body.message ?? message)
+      const parsed = await parseFood(req.body.message ?? message, conversationHistory)
       if (!parsed) return res.status(502).json({ error: 'Failed to parse input' })
 
       if (parsed.status === 'needs_clarification') {
